@@ -16,6 +16,11 @@ services:
 
   worker:
     build: ./worker
+    deploy:
+      resources:
+        limits:
+          cpus: '8.0'
+          memory: 8G
     depends_on:
       - redis
     volumes:

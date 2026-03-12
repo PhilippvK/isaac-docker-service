@@ -1,7 +1,12 @@
+import re
 import requests
 import time
 import sys
 from pathlib import Path
+from io import BytesIO
+
+RV_BASE_CONTAINER_ROOT = "/tools/etiss_arch_riscv/rv_base"
+
 
 class RetargetClient:
     def __init__(self, api_url: str, token: str = None):
@@ -12,9 +17,34 @@ class RetargetClient:
         self.api_url = api_url.rstrip("/")
         self.token = token
 
+    def _rewrite_dsl(self, dsl_path: str) -> bytes:
+        """
+        Rewrites rv_base imports so they point to the container path.
+        """
+
+        dsl_filename = Path(dsl_path).name
+        text = Path(dsl_path).read_text()
+
+        import_re = re.compile(r'import\s+"([^"]+)"')
+
+        def replace(match):
+            path = match.group(1)
+
+            if "rv_base" in path:
+                new_path = path.split("rv_base", 1)[1].lstrip("/")
+                return f'import "{RV_BASE_CONTAINER_ROOT}/{new_path}"'
+
+            return match.group(0)
+
+        rewritten = import_re.sub(replace, text)
+
+        return dsl_filename, rewritten.encode("utf-8")
+
     def submit_job(self, dsl_path: str, config_path: str):
+        dsl_filename, rewritten_dsl = self._rewrite_dsl(dsl_path)
         files = {
-            "dsl": open(dsl_path, "rb"),
+            # "dsl": open(dsl_path, "rb"),
+            "dsl": (dsl_filename, BytesIO(rewritten_dsl)),
             "config": open(config_path, "rb")
         }
         resp = requests.post(f"{self.api_url}/jobs", files=files)
@@ -52,6 +82,21 @@ class RetargetClient:
             time.sleep(poll_interval)
         return status["status"]
 
+    def download_logs(self, job_id: str, dest_path: str):
+    
+        resp = requests.get(
+            f"{self.api_url}/jobs/{job_id}/logs",
+            params={"token": self.token},
+            stream=True
+        )
+    
+        resp.raise_for_status()
+    
+        with open(dest_path, "wb") as f:
+            for chunk in resp.iter_content(1024 * 1024):
+                f.write(chunk)
+
+
 # ---------------------------
 # Example usage
 # ---------------------------
@@ -62,12 +107,19 @@ if __name__ == "__main__":
     # job_id, token = client.submit_job("test_files/test.dsl", "test_files/config.yaml")
     job_id, token = client.submit_job("test_files/XIsaac.splitted.core_desc", "test_files/config.yaml")
     print(f"Submitted job {job_id} with token {token}")
+    time.sleep(1)
 
     # Wait for completion while showing progress
     status = client.wait_for_completion(job_id)
-
-    # Download artifact
-    artifact_file = Path(f"{job_id}_artifact.tar.zst")
-    print(f"Downloading artifact to {artifact_file}")
-    client.download_artifact(job_id, str(artifact_file))
-    print("Download finished")
+    # if status == "failed":
+    log_file = Path(f"{job_id}_logs.txt")
+    print(f"Downloading logs to {log_file}")
+    client.download_logs(job_id, str(log_file))
+    if status == "failed":
+        print("Artifact not available (job failed)")
+    else:
+        # Download artifact
+        artifact_file = Path(f"{job_id}_artifact.tar.zst")
+        print(f"Downloading artifact to {artifact_file}")
+        client.download_artifact(job_id, str(artifact_file))
+        print("Download finished")
