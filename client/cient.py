@@ -8,6 +8,10 @@ from io import BytesIO
 RV_BASE_CONTAINER_ROOT = "/tools/etiss_arch_riscv/rv_base"
 
 
+assert len(sys.argv) == 2
+tag = sys.argv[1]
+
+
 class RetargetClient:
     def __init__(self, api_url: str, token: str = None):
         """
@@ -40,14 +44,17 @@ class RetargetClient:
 
         return dsl_filename, rewritten.encode("utf-8")
 
-    def submit_job(self, dsl_path: str, config_path: str):
+    def submit_job(self, tag: str, dsl_path: str, config_path: str):
         dsl_filename, rewritten_dsl = self._rewrite_dsl(dsl_path)
         files = {
             # "dsl": open(dsl_path, "rb"),
             "dsl": (dsl_filename, BytesIO(rewritten_dsl)),
             "config": open(config_path, "rb")
         }
-        resp = requests.post(f"{self.api_url}/jobs", files=files)
+        data = {
+            "tag": tag,
+        }
+        resp = requests.post(f"{self.api_url}/jobs", files=files, data=data)
         resp.raise_for_status()
         data = resp.json()
         self.token = data["token"]
@@ -105,7 +112,7 @@ if __name__ == "__main__":
 
     # Submit a job
     # job_id, token = client.submit_job("test_files/test.dsl", "test_files/config.yaml")
-    job_id, token = client.submit_job("test_files/XIsaac.splitted.core_desc", "test_files/config.yaml")
+    job_id, token = client.submit_job(tag, "test_files/XIsaac.splitted.core_desc", "test_files/config.yaml")
     print(f"Submitted job {job_id} with token {token}")
     time.sleep(1)
 

@@ -5,7 +5,7 @@ import json
 import tarfile
 import tempfile
 import redis
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import FileResponse
 from fastapi.responses import HTMLResponse
 
@@ -118,7 +118,7 @@ def cleanup_orphaned_jobs():
     cleanup_jobs()
 
 @app.post("/jobs")
-async def create_job(dsl: UploadFile = File(...),
+async def create_job(tag: str = Form(...), dsl: UploadFile = File(...),
                      config: UploadFile = File(...)):
 
     job_id = str(uuid.uuid4())
@@ -137,7 +137,9 @@ async def create_job(dsl: UploadFile = File(...),
         "job_id": job_id,
         "token": token,
         "status": "queued",
-        "progress": 0
+        "tag": tag,
+        "created_at": time.time(),
+        "progress": 0,
     }
 
     save_status(job_id, status)
@@ -154,11 +156,16 @@ def jobs():
     running = []
     finished = []
 
+    queue_ = []
+    for job_id in queue:
+        queue_.append({"job_id": job_id, "tag": tag})
+
     if not os.path.exists(JOBS_DIR):
         return {
-            "queued": queue,
+            "queued": queue_,
             "running": [],
-            "finished": []
+            "finished": [],
+            "recent_finished": [],
         }
 
     for job_id in os.listdir(JOBS_DIR):
@@ -177,6 +184,7 @@ def jobs():
             "progress": s.get("progress", 0),
             "eta_seconds": s.get("eta_seconds"),
             "elapsed_seconds": s.get("elapsed_seconds"),
+            "tag": s.get("tag"),
         }
 
         if s.get("status") == "running":
@@ -186,9 +194,10 @@ def jobs():
             finished.append(entry)
 
     return {
-        "queued": queue,
+        "queued": queue_,
         "running": running,
-        "finished": finished
+        "finished": finished,
+        "recent_finished": last_finished_jobs(),
     }
 
 
@@ -326,6 +335,7 @@ def workers_status():
         workers[wid] = {
             "state": info["state"],
             "job_id": info.get("job_id"),
+            "tags": info.get("tags"),
             "last_seen_unix": info["ts"]
         }
 
@@ -371,6 +381,28 @@ def server_status():
         "busy_workers": busy,
         "free_workers": idle
     }
+
+
+def last_finished_jobs(limit=10):
+
+    jobs = []
+
+    for job_id in os.listdir(JOBS_DIR):
+        try:
+            status = load_status(job_id)
+        except FileNotFoundError:
+            continue  # skip jobs without a status file
+
+        if status.get("status") == "finished":
+            jobs.append((status.get("finished_at", 0), job_id, status))
+
+    jobs.sort(reverse=True)
+
+    return [
+        {"job_id": j[1], **j[2]}
+        for j in jobs[:limit]
+    ]
+
 
 
 
@@ -438,6 +470,14 @@ tr:nth-child(even){
     border-radius:6px;
 }
 
+.badge {
+    padding: 2px 8px;
+    border-radius: 8px;
+    color: white;
+    font-size: 12px;
+    margin-left: 4px;
+}
+
 </style>
 </head>
 
@@ -459,6 +499,7 @@ tr:nth-child(even){
 <th>Status</th>
 <th>Current Job</th>
 <th>Last Seen</th>
+<th>Tags</th>
 </tr>
 </thead>
 
@@ -480,6 +521,7 @@ tr:nth-child(even){
 <th>Progress</th>
 <th>Elapsed</th>
 <th>ETA</th>
+<th>Tag</th>
 </tr>
 </thead>
 
@@ -499,6 +541,7 @@ tr:nth-child(even){
 <tr>
 <th>Position</th>
 <th>Job ID</th>
+<th>Tag</th>
 </tr>
 </thead>
 
@@ -508,7 +551,32 @@ tr:nth-child(even){
 
 </div>
 
+<div class="card">
+<h2>Recently Finished Jobs</h2>
+<table id="finished">
+<thead>
+<tr>
+<th>Job ID</th>
+<th>Status</th>
+<th>Finished At</th>
+<th>Tag</th>
+</tr>
+</thead>
+<tbody></tbody>
+</table>
+</div>
+
 <script>
+const TAG_COLORS = {
+    "llvm": "#4CAF50",
+    "etiss": "#2196F3",
+    "etiss-perf": "#FF9800"
+};
+
+function tagBadges(tags){
+    if(!tags) return "";
+    return tags.map(tag=>`<span class="badge" style="background:${TAG_COLORS[tag]||'#888'}">${tag}</span>`).join(" ");
+}
 
 function formatEta(s){
 
@@ -528,6 +596,32 @@ function progressBar(p){
     </div>
     ${Math.round(p)}%
     `
+}
+
+function formatDateTimeConditional(ts){
+    if(ts === undefined || ts === null){
+        return "invalid"
+    }
+    const d = new Date(ts*1000)
+    const now = new Date()
+
+    const isToday = d.getFullYear() === now.getFullYear() &&
+                    d.getMonth() === now.getMonth() &&
+                    d.getDate() === now.getDate()
+
+    const hh = String(d.getHours()).padStart(2,'0')
+    const min = String(d.getMinutes()).padStart(2,'0')
+    const sec = String(d.getSeconds()).padStart(2,'0')
+    const timePart = `${hh}:${min}:${sec}`
+
+    if(isToday){
+        return timePart
+    } else {
+        const yyyy = d.getFullYear()
+        const mm = String(d.getMonth()+1).padStart(2,'0')
+        const dd = String(d.getDate()).padStart(2,'0')
+        return `${yyyy}-${mm}-${dd} ${timePart}`
+    }
 }
 
 async function refresh(){
@@ -557,7 +651,8 @@ async function refresh(){
         "<td>"+id+"</td>"+
         "<td class='"+sc+"'>"+w.state+"</td>"+
         "<td>"+(w.job_id||"-")+"</td>"+
-        "<td>"+new Date(w.last_seen_unix*1000).toLocaleTimeString()+"</td>"
+        "<td>"+formatDateTimeConditional(w.last_seen_unix)+"</td>"+
+        "<td>"+tagBadges(w.tags)+"</td>"
 
         wt.appendChild(row)
     }
@@ -575,7 +670,8 @@ async function refresh(){
         "<td>"+j.job_id+"</td>"+
         "<td>"+progressBar(Math.round(j.progress * 100))+"</td>"+
         "<td>"+formatEta(j.elapsed_seconds)+"</td>"+
-        "<td>"+formatEta(j.eta_seconds)+"</td>"
+        "<td>"+formatEta(j.eta_seconds)+"</td>"+
+        "<td>"+tagBadges([j.tag])+"</td>"
 
         rt.appendChild(row)
     }
@@ -585,16 +681,34 @@ async function refresh(){
     const qt=document.querySelector("#queued tbody")
     qt.innerHTML=""
 
-    jobs.queued.forEach((j,i)=>{
+    // jobs.queued.forEach((j,i)=>{
+    var i = 0;
+    for(const j of jobs.queued){
 
         const row=document.createElement("tr")
 
         row.innerHTML=
         "<td>"+(i+1)+"</td>"+
-        "<td>"+j+"</td>"
+        "<td>"+j.job_id+"</td>"+
+        "<td>"+tagBadges([j.tag])+"</td>"
 
         qt.appendChild(row)
-    })
+        i = i + 1;
+
+    // })
+    }
+
+    const ft=document.querySelector("#finished tbody")
+        ft.innerHTML=""
+        jobs.recent_finished.forEach(j=>{
+            const row=document.createElement("tr")
+            row.innerHTML=
+                "<td>"+j.job_id+"</td>"+
+                "<td>"+j.status+"</td>"+
+                "<td>"+formatDateTimeConditional(j.finished_at)+"</td>"+
+                "<td>"+tagBadges([j.tag])+"</td>"
+            ft.appendChild(row)
+        })
 
 }
 

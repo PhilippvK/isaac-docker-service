@@ -8,6 +8,7 @@ import tempfile
 import subprocess
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+WORKER_TAGS = os.environ.get("WORKER_TAGS", "").split(",")
 
 r = redis.Redis(host=REDIS_HOST, port=6379, decode_responses=True)
 
@@ -25,6 +26,7 @@ def set_worker_state(state, job_id=None):
     data = {
         "state": state,
         "job_id": job_id,
+        "tags": WORKER_TAGS,
         "ts": int(time.time())
     }
 
@@ -166,7 +168,7 @@ def run_job(job_id):
                 for line in proc.stdout:
 
                     log.write(line)
-                    print("line", line)
+                    # print("line", line)
 
                     m = ninja_progress.search(line)
                     # print("m", m)
@@ -183,7 +185,7 @@ def run_job(job_id):
                             progress_ = cur / total
                             progress = start + progress_ * length
                             progress = round(progress, 3)
-                            print("progress", progress)
+                            # print("progress", progress)
 
                             update_progress(job_id, progress)
 
@@ -266,6 +268,31 @@ import threading
 threading.Thread(target=heartbeat, daemon=True).start()
 
 set_worker_state("idle", None)
+
+def fetch_job_for_worker():
+
+    queue = r.lrange("retarget_queue", 0, -1)
+
+    for job_id in queue:
+
+        # job_id = job_id.decode()
+        print("job_id", job_id)
+
+        status = load_status(job_id)
+        print("status", status)
+
+        if status["tag"] in WORKER_TAGS:
+
+            r.lrem("retarget_queue", 1, job_id)
+            return job_id
+
+    return None
+
 while True:
-    job = r.blpop("retarget_queue")[1]
-    run_job(job)
+    # job = r.blpop("retarget_queue")[1]
+    # run_job(job)
+    job = fetch_job_for_worker()
+    print("job", job)
+    if job:
+        run_job(job)
+    time.sleep(5.0)

@@ -14,8 +14,10 @@ services:
     volumes:
       - jobs:/jobs
 
-  worker:
-    build: ./worker
+  worker-llvm:
+    build:
+      context: ./worker/
+      dockerfile: ./llvm/Dockerfile
     deploy:
       resources:
         limits:
@@ -28,6 +30,46 @@ services:
       - ccache:/ccache
     environment:
       - REDIS_HOST=redis
+      - WORKER_TAGS=llvm
+    profiles: ["separated"]
+
+  worker-etiss:
+    build:
+      context: ./worker/
+      dockerfile: ./etiss/Dockerfile
+    deploy:
+      resources:
+        limits:
+          cpus: '8.0'
+          memory: 8G
+    depends_on:
+      - redis
+    volumes:
+      - jobs:/jobs
+      - ccache:/ccache
+    environment:
+      - REDIS_HOST=redis
+      - WORKER_TAGS=etiss
+    profiles: ["separated"]
+
+  worker-etiss-llvm:
+    build:
+      context: ./worker/
+      dockerfile: ./etiss_llvm/Dockerfile
+    deploy:
+      resources:
+        limits:
+          cpus: '8.0'
+          memory: 8G
+    depends_on:
+      - redis
+    volumes:
+      - jobs:/jobs
+      - ccache:/ccache
+    environment:
+      - REDIS_HOST=redis
+      - WORKER_TAGS=etiss,llvm
+    profiles: ["combined"]
 
 volumes:
   jobs:

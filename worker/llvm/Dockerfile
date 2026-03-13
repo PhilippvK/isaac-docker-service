@@ -6,11 +6,11 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y zstd tar
 
-COPY requirements.txt .
+COPY llvm/requirements.txt .
 RUN pip install -r requirements.txt
 
 COPY worker.py .
-COPY run_retarget.sh /scripts/run_retarget.sh
+COPY llvm/run_retarget.sh /scripts/run_retarget.sh
 
 RUN chmod +x /scripts/run_retarget.sh
 
