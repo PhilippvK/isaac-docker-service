@@ -65,6 +65,14 @@ class RetargetClient:
         resp.raise_for_status()
         return resp.json()
 
+    def get_log_buf(self, job_id: str, n_lines: int = 50):
+        resp = requests.get(f"{self.api_url}/logs/{job_id}", params={"token": self.token, "n_lines": n_lines})
+        resp.raise_for_status()
+        return resp.json()
+        # with open(dest_path, "wb") as f:
+        #     for chunk in resp.iter_content(1024 * 1024):
+        #         f.write(chunk)
+
     def download_artifact(self, job_id: str, dest_path: str):
         resp = requests.get(f"{self.api_url}/jobs/{job_id}/artifact", params={"token": self.token}, stream=True)
         resp.raise_for_status()
@@ -79,6 +87,8 @@ class RetargetClient:
             status = self.get_status(job_id)
             prog = status.get("progress", 0.0)
             prog_percent = int(prog*100)
+            log_buf = self.get_log_buf(job_id)
+            print("log_buf", log_buf)
             if prog_percent != last_progress:
                 sys.stdout.write(f"\rJob {job_id} progress: {prog_percent}%")
                 sys.stdout.flush()

@@ -5,9 +5,12 @@ import json
 import tarfile
 import tempfile
 import redis
+from collections import deque
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import FileResponse
 from fastapi.responses import HTMLResponse
+from fastapi.responses import PlainTextResponse
+from fastapi.responses import StreamingResponse
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 
@@ -118,7 +121,7 @@ def cleanup_orphaned_jobs():
     cleanup_jobs()
 
 @app.post("/jobs")
-async def create_job(tag: str = Form(...), dsl: UploadFile = File(...),
+async def create_job(tag: str = Form(...), cdsl: UploadFile = File(...), cpdsl: UploadFile = File(...),
                      config: UploadFile = File(...)):
 
     job_id = str(uuid.uuid4())
@@ -127,11 +130,18 @@ async def create_job(tag: str = Form(...), dsl: UploadFile = File(...),
     base = job_path(job_id)
     os.makedirs(base + "/input", exist_ok=True)
 
-    with open(base + f"/input/{dsl.filename}", "wb") as f:
-        f.write(await dsl.read())
+    # TODO: handle missing cfg or cpdsl
+    if cdsl:
+        with open(base + f"/input/{cdsl.filename}", "wb") as f:
+            f.write(await cdsl.read())
 
-    with open(base + "/input/config.yaml", "wb") as f:
-        f.write(await config.read())
+    if cpdsl:
+        with open(base + f"/input/{cpdsl.filename}", "wb") as f:
+            f.write(await cpdsl.read())
+
+    if config:
+        with open(base + "/input/config.yaml", "wb") as f:
+            f.write(await config.read())
 
     status = {
         "job_id": job_id,
@@ -148,6 +158,7 @@ async def create_job(tag: str = Form(...), dsl: UploadFile = File(...),
 
     return {"job_id": job_id, "token": token}
 
+
 @app.get("/jobs")
 def jobs():
 
@@ -158,6 +169,9 @@ def jobs():
 
     queue_ = []
     for job_id in queue:
+        status = load_status(job_id)
+        # tag = status.get("tag", "unknown")
+        tag = None
         queue_.append({"job_id": job_id, "tag": tag})
 
     if not os.path.exists(JOBS_DIR):
@@ -174,9 +188,10 @@ def jobs():
 
         if not os.path.exists(status_file):
             continue
+        s = load_status(job_id)
 
-        with open(status_file) as f:
-            s = json.load(f)
+        # with open(status_file) as f:
+        #     s = json.load(f)
 
         entry = {
             "job_id": job_id,
@@ -393,7 +408,7 @@ def last_finished_jobs(limit=10):
         except FileNotFoundError:
             continue  # skip jobs without a status file
 
-        if status.get("status") == "finished":
+        if status.get("status") in  ("finished", "failed"):
             jobs.append((status.get("finished_at", 0), job_id, status))
 
     jobs.sort(reverse=True)
@@ -727,7 +742,8 @@ def dashboard():
 
 
 @app.get("/jobs/{job_id}/logs")
-def get_logs(job_id: str, token: str):
+def get_logs(job_id: str, token: str, n_lines: int = 0, stream: bool = False):
+    print("get_logs", job_id, n_lines, stream)
 
     # check_job_token(job_id, token)
     status = load_status(job_id)
@@ -738,7 +754,37 @@ def get_logs(job_id: str, token: str):
     log_file = os.path.join(job_dir, "logs.txt")
 
     if not os.path.exists(log_file):
-        raise HTTPException(404, "Logs not available")
+        # raise HTTPException(404, "Logs not available")
+        if stream:
+            # create empty file for streaming
+            open(log_file, "a").close()
+        else:
+            return PlainTextResponse("Logs not yet available\n")
+
+    if stream:
+        # Stream new lines as they appear
+        def log_stream():
+            with open(log_file, "r") as f:
+                # Move to end of file if n_lines == 0
+                if n_lines > 0:
+                    last_lines = deque(f, maxlen=n_lines)
+                    for line in last_lines:
+                        yield line
+                else:
+                    f.seek(0, 2)  # move to end
+                while True:
+                    line = f.readline()
+                    if line:
+                        yield line
+                    else:
+                        time.sleep(0.2)
+
+        return StreamingResponse(log_stream(), media_type="text/plain")
+    elif n_lines > 0:
+        # Efficiently get last n_lines without reading entire file
+        with open(log_file, "r") as f:
+            last_lines = deque(f, maxlen=n_lines)
+        return PlainTextResponse("".join(last_lines))
 
     return FileResponse(
         log_file,

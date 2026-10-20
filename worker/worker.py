@@ -131,7 +131,6 @@ def run_job(job_id):
     try:
 
         with open(log_path, "w", buffering=1) as log:
-
             log.write(f"Starting job {job_id}\n")
             print(f"Starting job {job_id}")
 
@@ -163,40 +162,40 @@ def run_job(job_id):
 
             start_time = time.time()
 
-            with open(log_path, "w", buffering=1) as log:
 
-                for line in proc.stdout:
+            for line in proc.stdout:
 
-                    log.write(line)
-                    # print("line", line)
+                log.write(line)
+                log.flush()  # ensure line is immediately written
+                # print("line", line)
 
-                    m = ninja_progress.search(line)
-                    # print("m", m)
-                    if m:
-                        cur = int(m.group(1))
-                        # print("cur", cur)
-                        total = int(m.group(2))
-                        start = 0.1
-                        end = 0.9
-                        length = end - start
-                        if total > 300:
-                            # print("total", total)
+                m = ninja_progress.search(line)
+                # print("m", m)
+                if m:
+                    cur = int(m.group(1))
+                    # print("cur", cur)
+                    total = int(m.group(2))
+                    start = 0.1
+                    end = 0.9
+                    length = end - start
+                    if total > 150:
+                        # print("total", total)
 
-                            progress_ = cur / total
-                            progress = start + progress_ * length
-                            progress = round(progress, 3)
-                            # print("progress", progress)
+                        progress_ = cur / total
+                        progress = start + progress_ * length
+                        progress = round(progress, 3)
+                        # print("progress", progress)
 
-                            update_progress(job_id, progress)
+                        update_progress(job_id, progress)
 
-                ret = proc.wait()
+            ret = proc.wait()
 
-                log.write(f"Process exited with code {ret}\n")
+            log.write(f"Process exited with code {ret}\n")
 
-                if ret != 0:
-                    log.write("Retargeting script failed\n")
-                    fail_job(job_id, f"retarget.sh exited with code {ret}")
-                    return
+            if ret != 0:
+                log.write("Retargeting script failed\n")
+                fail_job(job_id, f"retarget.sh exited with code {ret}")
+                return
             end_time = time.time()
             diff_time = end_time - start_time
             print("diff_time", diff_time)
