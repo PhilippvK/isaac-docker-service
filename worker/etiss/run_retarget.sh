@@ -18,6 +18,7 @@ echo "JOB_DIR=$JOB_DIR"
 ls
 ls input
 FILES=$(find input/ -name "*.core_desc" -or -name "*.yml" -or -name "*.yaml")
+# TODO: handle etiss
 # example placeholder
 CLEANUP=$CLEANUP CCACHE=$CCACHE RESET=$RESET VERBOSE=$VERBOSE /work/seal5_script.sh $DEST $FILES
 # sleep 30
