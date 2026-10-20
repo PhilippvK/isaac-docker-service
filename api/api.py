@@ -1,10 +1,14 @@
 import os
+import asyncio
+import re
 import time
 import uuid
 import json
-import tarfile
-import tempfile
 import redis
+try:
+    from job_state import State
+except ImportError:
+    from worker.job_state import State
 from collections import deque
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import FileResponse
@@ -30,27 +34,14 @@ def status_file(job_id):
 
 
 def load_status(job_id):
-    with open(status_file(job_id)) as f:
-        return json.load(f)
+    try:
+        return State(r, JOBS_DIR).load(job_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Unknown job")
 
 
 def save_status(job_id, data):
-    # with open(status_file(job_id), "w") as f:
-    #     json.dump(data, f)
-    base = os.path.join(JOBS_DIR, job_id)
-    status_path = os.path.join(base, "status.json")
-
-    tmp_fd, tmp_path = tempfile.mkstemp(dir=base)
-
-    try:
-        with os.fdopen(tmp_fd, "w") as f:
-            json.dump(data, f)
-
-        os.replace(tmp_path, status_path)   # atomic replace
-
-    finally:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+    State(r, JOBS_DIR).save(job_id, data)
 
 
 def cleanup_jobs():
@@ -101,8 +92,7 @@ def cleanup_jobs():
             status["status"] = "failed"
             status["error"] = "worker disappeared"
 
-            with open(status_file, "w") as f:
-                json.dump(status, f)
+            save_status(job_id, status)
 
         # case 2: queued job not in redis queue
         if state == "queued" and job_id not in queue:
@@ -112,17 +102,51 @@ def cleanup_jobs():
             status["status"] = "failed"
             status["error"] = "queue entry lost"
 
-            with open(status_file, "w") as f:
-                json.dump(status, f)
+            save_status(job_id, status)
 
 
 @app.on_event("startup")
 def cleanup_orphaned_jobs():
-    cleanup_jobs()
+    if os.getenv("RESET_ON_STARTUP", "1") == "1":
+        State(r, JOBS_DIR).reset()
+    else:
+        with State(r, JOBS_DIR).lock():
+            cleanup_jobs()
+
+
+@app.get("/health")
+def health():
+    return {"ready": True}
+
+def rewrite_description(content, filenames):
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=422, detail="CoreDSL files must be UTF-8 text")
+
+    def rewrite(match):
+        path = match[1]
+        if "rv_base" in path:
+            path = "/tools/etiss_arch_riscv/rv_base/" + path.split("rv_base", 1)[1].lstrip("/")
+        elif "etiss_arch_riscv" in path:
+            path = "/tools/etiss_arch_riscv/" + path.split("etiss_arch_riscv", 1)[1].lstrip("/")
+        elif os.path.basename(path) in filenames:
+            path = os.path.basename(path)
+        return f'import "{path}"'
+
+    return re.sub(r'import\s+"([^"]+)"', rewrite, text).encode()
+
 
 @app.post("/jobs")
 async def create_job(tag: str = Form(...), cdsl: UploadFile = File(...), cpdsl: UploadFile = File(...),
-                     config: UploadFile = File(...)):
+                     config: UploadFile = File(...), index: UploadFile = File(None),
+                     hls: UploadFile = File(None)):
+
+    if tag == "etiss_perf" and (index is None or hls is None):
+        raise HTTPException(status_code=422, detail="etiss_perf requires index and hls uploads")
+    for upload in (cdsl, cpdsl):
+        if not upload.filename or upload.filename != os.path.basename(upload.filename) or upload.filename in (".", ".."):
+            raise HTTPException(status_code=422, detail="Input filenames must be plain filenames")
 
     job_id = str(uuid.uuid4())
     token = str(uuid.uuid4())
@@ -130,18 +154,19 @@ async def create_job(tag: str = Form(...), cdsl: UploadFile = File(...), cpdsl: 
     base = job_path(job_id)
     os.makedirs(base + "/input", exist_ok=True)
 
-    # TODO: handle missing cfg or cpdsl
-    if cdsl:
-        with open(base + f"/input/{cdsl.filename}", "wb") as f:
-            f.write(await cdsl.read())
-
-    if cpdsl:
-        with open(base + f"/input/{cpdsl.filename}", "wb") as f:
-            f.write(await cpdsl.read())
+    for upload in (cdsl, cpdsl):
+        content = rewrite_description(await upload.read(), (cdsl.filename, cpdsl.filename))
+        with open(os.path.join(base, "input", upload.filename), "wb") as f:
+            f.write(content)
 
     if config:
         with open(base + "/input/config.yaml", "wb") as f:
             f.write(await config.read())
+
+    for upload, filename in ((index, "index.yaml"), (hls, "hls.tar.gz")):
+        if upload is not None:
+            with open(os.path.join(base, "input", filename), "wb") as f:
+                f.write(await upload.read())
 
     status = {
         "job_id": job_id,
@@ -150,11 +175,13 @@ async def create_job(tag: str = Form(...), cdsl: UploadFile = File(...), cpdsl: 
         "tag": tag,
         "created_at": time.time(),
         "progress": 0,
+        "epoch": State(r, JOBS_DIR).epoch(),
     }
 
-    save_status(job_id, status)
-
-    r.rpush("retarget_queue", job_id)
+    with State(r, JOBS_DIR).lock():
+        status["epoch"] = State(r, JOBS_DIR).epoch()
+        save_status(job_id, status)
+        r.rpush("retarget_queue", job_id)
 
     return {"job_id": job_id, "token": token}
 
@@ -169,10 +196,13 @@ def jobs():
 
     queue_ = []
     for job_id in queue:
-        status = load_status(job_id)
-        # tag = status.get("tag", "unknown")
-        tag = None
-        queue_.append({"job_id": job_id, "tag": tag})
+        try:
+            status = load_status(job_id)
+        except HTTPException:
+            continue
+        if status.get("archived") or status["status"] != "queued":
+            continue
+        queue_.append({"job_id": job_id, "tag": status.get("tag", "unknown"), "token": status["token"]})
 
     if not os.path.exists(JOBS_DIR):
         return {
@@ -189,6 +219,8 @@ def jobs():
         if not os.path.exists(status_file):
             continue
         s = load_status(job_id)
+        if s.get("archived"):
+            continue
 
         # with open(status_file) as f:
         #     s = json.load(f)
@@ -197,15 +229,17 @@ def jobs():
             "job_id": job_id,
             "status": s.get("status"),
             "progress": s.get("progress", 0),
+            "stage": s.get("stage"),
             "eta_seconds": s.get("eta_seconds"),
             "elapsed_seconds": s.get("elapsed_seconds"),
             "tag": s.get("tag"),
+            "token": s["token"],
         }
 
-        if s.get("status") == "running":
+        if s.get("status") in ("running", "aborting"):
             running.append(entry)
 
-        elif s.get("status") == "finished":
+        elif s.get("status") == "finished" and not s.get("history_hidden"):
             finished.append(entry)
 
     return {
@@ -237,95 +271,12 @@ def download_artifact(job_id: str, token: str):
 
     artifact = os.path.join(job_path(job_id), "artifact.tar.zst")
 
-    if not os.path.exists(artifact):
+    if status["status"] != "finished" or not os.path.exists(artifact):
         raise HTTPException(status_code=404)
 
-    return FileResponse(artifact, filename="artifact.tar.zst")
+    return FileResponse(artifact, filename=f"{job_id}_artifact.tar.zst")
 
 
-# @app.get("/status")
-# def server_status():
-# 
-#     now = time.time()
-# 
-#     workers = r.hgetall("workers")
-# 
-#     alive_workers = 0
-#     for ts in workers.values():
-#         if now - float(ts) < 10:
-#             alive_workers += 1
-# 
-#     queue_len = r.llen("retarget_queue")
-# 
-#     busy_workers = 0
-#     for job_id in os.listdir(JOBS_DIR):
-#         sf = os.path.join(JOBS_DIR, job_id, "status.json")
-#         if os.path.exists(sf):
-#             with open(sf) as f:
-#                 s = json.load(f)
-#                 if s.get("status") == "running":
-#                     busy_workers += 1
-# 
-#     free_workers = max(alive_workers - busy_workers, 0)
-# 
-#     return {
-#         "queue_length": queue_len,
-#         "total_workers": alive_workers,
-#         "busy_workers": busy_workers,
-#         "free_workers": free_workers
-#     }
-
-# @app.get("/workers")
-# def workers_status():
-# 
-#     now = time.time()
-# 
-#     workers = r.hgetall("workers")
-# 
-#     result = {}
-#     alive = 0
-# 
-#     for wid, ts in workers.items():
-#         age = now - float(ts)
-# 
-#         if age < 10:
-#             state = "alive"
-#             alive += 1
-#         else:
-#             state = "stale"
-# 
-#         result[wid] = {
-#             "last_seen_seconds_ago": round(age, 2),
-#             "state": state
-#         }
-# 
-#     return {
-#         "total_workers": len(workers),
-#         "alive_workers": alive,
-#         "workers": result
-#     }
-
-
-# @app.get("/workers")
-# def workers_status():
-# 
-#     keys = r.keys("worker:*")
-# 
-#     workers = {}
-# 
-#     for key in keys:
-#         wid = key.split(":")[1]
-# 
-#         ts = int(r.get(key))
-# 
-#         workers[wid] = {
-#             "last_seen_unix": ts
-#         }
-# 
-#     return {
-#         "total_workers": len(keys),
-#         "workers": workers
-#     }
 @app.get("/workers")
 def workers_status():
 
@@ -402,13 +353,13 @@ def last_finished_jobs(limit=10):
 
     jobs = []
 
-    for job_id in os.listdir(JOBS_DIR):
+    for job_id in os.listdir(JOBS_DIR) if os.path.isdir(JOBS_DIR) else []:
         try:
             status = load_status(job_id)
-        except FileNotFoundError:
+        except HTTPException:
             continue  # skip jobs without a status file
 
-        if status.get("status") in  ("finished", "failed"):
+        if not status.get("archived") and not status.get("history_hidden") and status.get("status") in ("finished", "failed", "aborted"):
             jobs.append((status.get("finished_at", 0), job_id, status))
 
     jobs.sort(reverse=True)
@@ -421,324 +372,16 @@ def last_finished_jobs(limit=10):
 
 
 
-DASHBOARD_HTML = """
-<!DOCTYPE html>
-<html>
-<head>
-
-<title>Retarget Build Cluster</title>
-
-<style>
-
-body {
-    font-family: Arial;
-    background:#0f172a;
-    color:#e2e8f0;
-    margin:40px;
-}
-
-h1 { margin-bottom:20px }
-
-.card{
-    background:#1e293b;
-    border-radius:10px;
-    padding:20px;
-    margin-bottom:20px;
-}
-
-.metric{
-    font-size:18px;
-    margin-right:30px;
-}
-
-table{
-    width:100%;
-    border-collapse:collapse;
-}
-
-th,td{
-    padding:8px;
-    text-align:left;
-}
-
-th{
-    background:#334155;
-}
-
-tr:nth-child(even){
-    background:#1e293b;
-}
-
-.status-idle{color:#22c55e;font-weight:bold}
-.status-busy{color:#f97316;font-weight:bold}
-
-.progressbar{
-    background:#334155;
-    border-radius:6px;
-    height:18px;
-    width:100%;
-}
-
-.progress{
-    background:#3b82f6;
-    height:18px;
-    border-radius:6px;
-}
-
-.badge {
-    padding: 2px 8px;
-    border-radius: 8px;
-    color: white;
-    font-size: 12px;
-    margin-left: 4px;
-}
-
-</style>
-</head>
-
-<body>
-
-<h1>⚙ Retarget Build Cluster</h1>
-
-<div class="card" id="metrics">Loading...</div>
-
-<div class="card">
-
-<h2>Workers</h2>
-
-<table id="workers">
-
-<thead>
-<tr>
-<th>Worker</th>
-<th>Status</th>
-<th>Current Job</th>
-<th>Last Seen</th>
-<th>Tags</th>
-</tr>
-</thead>
-
-<tbody></tbody>
-
-</table>
-
-</div>
-
-<div class="card">
-
-<h2>Running Jobs</h2>
-
-<table id="running">
-
-<thead>
-<tr>
-<th>Job ID</th>
-<th>Progress</th>
-<th>Elapsed</th>
-<th>ETA</th>
-<th>Tag</th>
-</tr>
-</thead>
-
-<tbody></tbody>
-
-</table>
-
-</div>
-
-<div class="card">
-
-<h2>Queued Jobs</h2>
-
-<table id="queued">
-
-<thead>
-<tr>
-<th>Position</th>
-<th>Job ID</th>
-<th>Tag</th>
-</tr>
-</thead>
-
-<tbody></tbody>
-
-</table>
-
-</div>
-
-<div class="card">
-<h2>Recently Finished Jobs</h2>
-<table id="finished">
-<thead>
-<tr>
-<th>Job ID</th>
-<th>Status</th>
-<th>Finished At</th>
-<th>Tag</th>
-</tr>
-</thead>
-<tbody></tbody>
-</table>
-</div>
-
-<script>
-const TAG_COLORS = {
-    "llvm": "#4CAF50",
-    "etiss": "#2196F3",
-    "etiss-perf": "#FF9800"
-};
-
-function tagBadges(tags){
-    if(!tags) return "";
-    return tags.map(tag=>`<span class="badge" style="background:${TAG_COLORS[tag]||'#888'}">${tag}</span>`).join(" ");
-}
-
-function formatEta(s){
-
-    if(!s) return "-"
-
-    const m=Math.floor(s/60)
-    const sec=s%60
-
-    return m+"m "+sec+"s"
-}
-
-function progressBar(p){
-
-    return `
-    <div class="progressbar">
-        <div class="progress" style="width:${p}%"></div>
-    </div>
-    ${Math.round(p)}%
-    `
-}
-
-function formatDateTimeConditional(ts){
-    if(ts === undefined || ts === null){
-        return "invalid"
-    }
-    const d = new Date(ts*1000)
-    const now = new Date()
-
-    const isToday = d.getFullYear() === now.getFullYear() &&
-                    d.getMonth() === now.getMonth() &&
-                    d.getDate() === now.getDate()
-
-    const hh = String(d.getHours()).padStart(2,'0')
-    const min = String(d.getMinutes()).padStart(2,'0')
-    const sec = String(d.getSeconds()).padStart(2,'0')
-    const timePart = `${hh}:${min}:${sec}`
-
-    if(isToday){
-        return timePart
-    } else {
-        const yyyy = d.getFullYear()
-        const mm = String(d.getMonth()+1).padStart(2,'0')
-        const dd = String(d.getDate()).padStart(2,'0')
-        return `${yyyy}-${mm}-${dd} ${timePart}`
-    }
-}
-
-async function refresh(){
-
-    const status=await fetch("/status").then(r=>r.json())
-    const workers=await fetch("/workers").then(r=>r.json())
-    const jobs=await fetch("/jobs").then(r=>r.json())
-
-    document.getElementById("metrics").innerHTML=
-        "<span class='metric'>Workers: "+status.total_workers+"</span>"+
-        "<span class='metric'>Busy: "+status.busy_workers+"</span>"+
-        "<span class='metric'>Free: "+status.free_workers+"</span>"+
-        "<span class='metric'>Queue: "+status.queue_length+"</span>"
-
-    /* workers */
-
-    const wt=document.querySelector("#workers tbody")
-    wt.innerHTML=""
-
-    for(const [id,w] of Object.entries(workers.workers)){
-
-        const row=document.createElement("tr")
-
-        const sc=w.state==="idle"?"status-idle":"status-busy"
-
-        row.innerHTML=
-        "<td>"+id+"</td>"+
-        "<td class='"+sc+"'>"+w.state+"</td>"+
-        "<td>"+(w.job_id||"-")+"</td>"+
-        "<td>"+formatDateTimeConditional(w.last_seen_unix)+"</td>"+
-        "<td>"+tagBadges(w.tags)+"</td>"
-
-        wt.appendChild(row)
-    }
-
-    /* running jobs */
-
-    const rt=document.querySelector("#running tbody")
-    rt.innerHTML=""
-
-    for(const j of jobs.running){
-
-        const row=document.createElement("tr")
-
-        row.innerHTML=
-        "<td>"+j.job_id+"</td>"+
-        "<td>"+progressBar(Math.round(j.progress * 100))+"</td>"+
-        "<td>"+formatEta(j.elapsed_seconds)+"</td>"+
-        "<td>"+formatEta(j.eta_seconds)+"</td>"+
-        "<td>"+tagBadges([j.tag])+"</td>"
-
-        rt.appendChild(row)
-    }
-
-    /* queued jobs */
-
-    const qt=document.querySelector("#queued tbody")
-    qt.innerHTML=""
-
-    // jobs.queued.forEach((j,i)=>{
-    var i = 0;
-    for(const j of jobs.queued){
-
-        const row=document.createElement("tr")
-
-        row.innerHTML=
-        "<td>"+(i+1)+"</td>"+
-        "<td>"+j.job_id+"</td>"+
-        "<td>"+tagBadges([j.tag])+"</td>"
-
-        qt.appendChild(row)
-        i = i + 1;
-
-    // })
-    }
-
-    const ft=document.querySelector("#finished tbody")
-        ft.innerHTML=""
-        jobs.recent_finished.forEach(j=>{
-            const row=document.createElement("tr")
-            row.innerHTML=
-                "<td>"+j.job_id+"</td>"+
-                "<td>"+j.status+"</td>"+
-                "<td>"+formatDateTimeConditional(j.finished_at)+"</td>"+
-                "<td>"+tagBadges([j.tag])+"</td>"
-            ft.appendChild(row)
-        })
-
-}
-
-refresh()
-setInterval(refresh,2000)
-
-</script>
-
-</body>
-</html>
-"""
-
 @app.get("/dashboard", response_class=HTMLResponse)
-def dashboard():
-    return DASHBOARD_HTML
+def dashboard(readonly: bool = False):
+    from pathlib import Path
+    html = Path(__file__).with_name("dashboard.html").read_text()
+    return html.replace("__READONLY__", "true" if readonly else "false")
+
+
+@app.get("/dashboard/readonly", response_class=HTMLResponse)
+def readonly_dashboard():
+    return dashboard(True)
 
 
 @app.get("/jobs/{job_id}/logs")
@@ -763,7 +406,7 @@ def get_logs(job_id: str, token: str, n_lines: int = 0, stream: bool = False):
 
     if stream:
         # Stream new lines as they appear
-        def log_stream():
+        async def log_stream():
             with open(log_file, "r") as f:
                 # Move to end of file if n_lines == 0
                 if n_lines > 0:
@@ -777,7 +420,9 @@ def get_logs(job_id: str, token: str, n_lines: int = 0, stream: bool = False):
                     if line:
                         yield line
                     else:
-                        time.sleep(0.2)
+                        if load_status(job_id)["status"] in ("finished", "failed", "aborted"):
+                            break
+                        await asyncio.sleep(0.2)
 
         return StreamingResponse(log_stream(), media_type="text/plain")
     elif n_lines > 0:
@@ -786,8 +431,36 @@ def get_logs(job_id: str, token: str, n_lines: int = 0, stream: bool = False):
             last_lines = deque(f, maxlen=n_lines)
         return PlainTextResponse("".join(last_lines))
 
-    return FileResponse(
-        log_file,
-        filename=f"{job_id}_logs.txt",
-        media_type="text/plain"
-    )
+    # Bound the download to a snapshot length: logs can grow while a response
+    # is being sent, which would otherwise invalidate Content-Length.
+    size = os.path.getsize(log_file)
+
+    def snapshot():
+        with open(log_file, "rb") as handle:
+            remaining = size
+            while remaining:
+                chunk = handle.read(min(65536, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                yield chunk
+
+    return StreamingResponse(snapshot(), media_type="text/plain", headers={
+        "Content-Length": str(size),
+        "Content-Disposition": f'attachment; filename="{job_id}_logs.txt"',
+    })
+
+
+@app.post("/jobs/{job_id}/abort")
+def abort_job(job_id: str, token: str):
+    try:
+        return State(r, JOBS_DIR).abort(job_id, token)
+    except PermissionError:
+        raise HTTPException(status_code=403)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404)
+
+
+@app.post("/jobs/completed/clear")
+def clear_completed_jobs():
+    return {"cleared": State(r, JOBS_DIR).clear_completed()}

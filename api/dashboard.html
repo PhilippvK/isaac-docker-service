@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Retarget Build Cluster</title>
+<style>
+body{font-family:Arial,sans-serif;background:#0f172a;color:#e2e8f0;margin:40px;font-size:14px}h1{font-size:28px;margin:0}h2{font-size:20px;margin:0 0 14px}.card{background:#1e293b;border-radius:10px;padding:20px;margin-bottom:20px}.heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.heading h2{margin:0}.metric{font-size:18px;margin-right:30px;display:inline-block}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px}th{background:#334155}tbody tr:nth-child(even){background:#243247}td:first-child{overflow-wrap:anywhere}button{font:inherit;cursor:pointer}button:disabled{cursor:default;opacity:.35}.icon-button{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;padding:5px;margin:0 3px 0 0;border:1px solid #475569;border-radius:5px;color:#e2e8f0;background:transparent;vertical-align:middle}.icon-button:hover:enabled{background:#334155;border-color:#94a3b8}.icon-button:focus-visible{outline:2px solid #60a5fa;outline-offset:2px}.icon-button svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.danger{color:#fb7185}.actions{white-space:nowrap;width:1%}.badge{display:inline-block;padding:2px 8px;border-radius:8px;color:white;font-size:12px;margin-right:4px}.tag-llvm{background:#4caf50}.tag-etiss{background:#2196f3}.tag-etiss_perf{background:#ff9800}.tag-other{background:#64748b}.status-idle,.status-finished{color:#22c55e;font-weight:bold}.status-busy,.status-running,.status-aborting{color:#f97316;font-weight:bold}.status-failed{color:#fb7185;font-weight:bold}.status-aborted{color:#94a3b8}.status-queued{color:#93c5fd}.progressbar{background:#334155;border-radius:6px;height:18px;min-width:100px;overflow:hidden}.progress{background:#3b82f6;height:18px}.progress-label{font-size:12px;display:block;margin-top:3px}dialog{font:inherit;background:#1e293b;color:#e2e8f0;border:1px solid #475569;border-radius:10px;padding:20px;width:min(640px,calc(100vw - 60px));max-height:85vh;overflow:auto}dialog::backdrop{background:#020617b3}#log-panel{width:min(1000px,calc(100vw - 60px))}#log-title{overflow-wrap:anywhere;font-size:17px}pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:60vh;overflow:auto;font-size:13px;line-height:1.5;margin-bottom:0}fieldset{border:0;padding:0;margin:0}label{display:block;margin:12px 0}input,select{font:inherit;display:block;margin-top:6px;max-width:100%}select{background:#0f172a;color:#e2e8f0;border:1px solid #475569;padding:6px;border-radius:4px}#error{color:#fda4af}#error:empty,#submitted:empty,#mode:empty{display:none}#mode{color:#94a3b8}#submitted{color:#86efac}.table-wrap{overflow-x:auto}.time{white-space:nowrap}@media(max-width:700px){body{margin:16px}.card{padding:14px}.metric{margin:5px 16px 5px 0}h1{font-size:22px}}
+</style>
+<header class="heading"><h1>⚙ Retarget Build Cluster</h1><button id="new-job" class="icon-button" aria-label="New job" title="Submit a new job" data-icon="plus"></button></header>
+<p id="mode"></p><p id="error" role="alert"></p><p id="submitted" role="status"></p>
+<div class="card" id="metrics">Loading…</div>
+<section class="card"><h2>Workers</h2><div class="table-wrap"><table><thead><tr><th>Worker</th><th>Status</th><th>Current job</th><th>Last seen</th><th>Tags</th></tr></thead><tbody id="workers"></tbody></table></div></section>
+<section class="card"><h2>Running jobs</h2><div class="table-wrap"><table><thead><tr><th>Job ID</th><th>Tag</th><th>Status</th><th>Progress</th><th>Elapsed</th><th>ETA</th><th>Actions</th></tr></thead><tbody id="running"></tbody></table></div></section>
+<section class="card"><h2>Queued jobs</h2><div class="table-wrap"><table><thead><tr><th>Job ID</th><th>Tag</th><th>Status</th><th>Actions</th></tr></thead><tbody id="queued"></tbody></table></div></section>
+<section class="card"><div class="heading"><h2>Recently completed jobs</h2><button id="clear-completed" class="icon-button" aria-label="Clear recently completed jobs" title="Clear completed history (keep logs and artifacts)" data-icon="clear"></button></div><div class="table-wrap"><table><thead><tr><th>Job ID</th><th>Tag</th><th>Status</th><th>Finished at</th><th>Actions</th></tr></thead><tbody id="finished"></tbody></table></div></section>
+<dialog id="submit-panel" aria-labelledby="submit-title"><div class="heading"><h2 id="submit-title">Submit a job</h2><button id="close-submit" class="icon-button" aria-label="Close submission" title="Close" data-icon="close"></button></div>
+<form id="submit"><fieldset id="inputs">
+<label>Target <select name="tag" id="tag"><option value="llvm">LLVM</option><option value="etiss">ETISS ISS</option><option value="etiss_perf">ETISS performance simulator</option></select></label>
+<label>CoreDSL (top-level description) <input type="file" name="cdsl" required></label>
+<label>Split description <input type="file" name="cpdsl" required></label>
+<label>Configuration YAML <input type="file" name="config" required></label>
+<div id="perf" hidden><label>ISAAC index YAML <input type="file" name="index"></label><label>HLS results (.tar.gz) <input type="file" name="hls"></label></div>
+<button type="submit" id="send" class="icon-button" aria-label="Submit job" title="Submit job" data-icon="send"></button>
+</fieldset></form></dialog>
+<dialog id="log-panel" aria-labelledby="log-title"><div class="heading"><h2 id="log-title">Logs</h2><button id="close-logs" class="icon-button" aria-label="Close monitor" title="Close" data-icon="close"></button></div><pre id="logs" aria-live="polite"></pre></dialog>
+<script>
+const readonly = __READONLY__;
+const $ = id => document.getElementById(id);
+const paths={plus:'M12 5v14M5 12h14',close:'M6 6l12 12M6 18L18 6',abort:'M7 3h10l4 4v10l-4 4H7l-4-4V7z M9 9l6 6m0-6l-6 6',monitor:'M3 4h18v14H3z M8 21h8m-4-3v3 M6 8l3 3-3 3m6 0h5',logs:'M7 3H4v18h16V8l-5-5H7 M14 3v6h6 M8 13h8m-8 4h6',artifact:'M3 7l9-5 9 5v10l-9 5-9-5z M3 7l9 5 9-5m-9 5v10m-5-17l10 5',clear:'M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14M10 11v6m4-6v6',send:'M12 19V5m-6 6l6-6 6 6'};
+function icon(name){const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('aria-hidden','true');const path=document.createElementNS(svg.namespaceURI,'path');path.setAttribute('d',paths[name]);svg.append(path);return svg;}
+for(const b of document.querySelectorAll('[data-icon]')){b.append(icon(b.dataset.icon));b.disabled=readonly;}
+$('mode').textContent = readonly ? 'Read-only view — controls are disabled.' : '';
+$('inputs').disabled=readonly;
+let monitored=null;
+async function request(url,options){const response=await fetch(url,options);if(!response.ok)throw new Error(`${response.status}: ${await response.text()}`);return response;}
+function jobURL(job,suffix){return `/jobs/${encodeURIComponent(job.job_id)}${suffix}?token=${encodeURIComponent(job.token)}`;}
+function button(label,name,callback,disabled=false){const b=document.createElement('button');b.type='button';b.className='icon-button'+(name==='abort'?' danger':'');b.setAttribute('aria-label',label);b.title=label;b.append(icon(name));b.disabled=readonly||disabled;b.onclick=async()=>{if(readonly)return;try{await callback();$('error').textContent='';}catch(e){$('error').textContent=e.message;}};return b;}
+function cell(row,text){const td=row.insertCell();td.textContent=text??'—';return td;}
+function badges(parent,tags){for(const tag of tags){const b=document.createElement('span');b.className='badge '+(['llvm','etiss','etiss_perf'].includes(tag)?`tag-${tag}`:'tag-other');b.textContent=tag||'unknown';parent.append(b);}}
+function statusCell(row,value){const td=cell(row,value);td.className=`status-${value}`;return td;}
+function duration(seconds){return seconds==null?'—':`${Math.floor(seconds/60)}m ${Math.floor(seconds%60)}s`;}
+function dateTime(seconds){if(seconds==null)return '—';const d=new Date(seconds*1000);return d.toDateString()===new Date().toDateString()?d.toLocaleTimeString():d.toLocaleString();}
+function renderJobs(id,jobs){const body=$(id);body.replaceChildren();for(const job of jobs){const state=job.status||'queued';const row=body.insertRow();cell(row,job.job_id);badges(cell(row,''),[job.tag]);statusCell(row,state);
+ if(id==='running'){const value=Math.round(Math.max(0,Math.min(1,job.progress||0))*100);const td=cell(row,'');const track=document.createElement('div');track.className='progressbar';track.setAttribute('role','progressbar');track.setAttribute('aria-label','Job progress');track.setAttribute('aria-valuenow',value);track.setAttribute('aria-valuemin','0');track.setAttribute('aria-valuemax','100');const fill=document.createElement('div');fill.className='progress';fill.style.width=`${value}%`;track.append(fill);td.append(track);const label=document.createElement('span');label.className='progress-label';label.textContent=`${value}%${job.stage?' · '+job.stage:''}`;td.append(label);cell(row,duration(job.elapsed_seconds));cell(row,duration(job.eta_seconds));}
+ if(id==='finished')cell(row,dateTime(job.finished_at)).className='time';
+ const actions=cell(row,'');actions.className='actions';if(['queued','running','aborting'].includes(state))actions.append(button('Abort','abort',async()=>{await request(jobURL(job,'/abort'),{method:'POST'});await refresh();},state==='aborting'));
+ if(state!=='queued'){actions.append(button('Monitor logs','monitor',async()=>{monitored=job;$('log-title').textContent=`Logs: ${job.job_id}`;$('logs').textContent='Loading…';$('log-panel').showModal();await updateLogs();}));actions.append(button('Download logs','logs',()=>window.location.assign(jobURL(job,'/logs'))));}
+ if(state==='finished')actions.append(button('Download artifact','artifact',()=>window.location.assign(jobURL(job,'/artifact'))));}}
+async function updateLogs(){if(monitored&&$('log-panel').open){const response=await request(jobURL(monitored,'/logs')+'&n_lines=200');$('logs').textContent=await response.text();}}
+$('new-job').onclick=()=>{if(!readonly)$('submit-panel').showModal();};
+$('close-submit').onclick=()=>{if(!readonly)$('submit-panel').close();};
+$('close-logs').onclick=()=>{if(!readonly)$('log-panel').close();};
+$('log-panel').addEventListener('close',()=>{monitored=null;});
+for(const dialog of document.querySelectorAll('dialog'))dialog.addEventListener('click',event=>{if(event.target===dialog&&!readonly){const r=dialog.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)dialog.close();}});
+$('clear-completed').onclick=async()=>{if(readonly)return;try{await request('/jobs/completed/clear',{method:'POST'});await refresh();$('error').textContent='';}catch(e){$('error').textContent=e.message;}};
+$('tag').onchange=()=>{const perf=$('tag').value==='etiss_perf';$('perf').hidden=!perf;for(const name of ['index','hls'])$('submit').elements[name].required=perf;};
+$('submit').onsubmit=async event=>{event.preventDefault();if(readonly)return;$('send').disabled=true;try{const data=new FormData(event.target);if(data.get('tag')!=='etiss_perf'){data.delete('index');data.delete('hls');}const response=await request('/jobs',{method:'POST',body:data});const job=await response.json();$('submitted').textContent=`Submitted ${job.job_id}`;$('error').textContent='';$('submit-panel').close();await refresh();}catch(e){$('error').textContent=e.message;}finally{$('send').disabled=readonly;}};
+async function refresh(){const [status,workers,jobs]=await Promise.all(['/status','/workers','/jobs'].map(async url=>(await request(url)).json()));$('metrics').replaceChildren();for(const [label,value] of [['Workers',status.total_workers],['Busy',status.busy_workers],['Free',status.free_workers],['Queue',status.queue_length]]){const span=document.createElement('span');span.className='metric';span.textContent=`${label}: ${value}`;$('metrics').append(span);}
+ $('workers').replaceChildren();for(const [id,worker] of Object.entries(workers.workers)){const row=$('workers').insertRow();cell(row,id);statusCell(row,worker.state);cell(row,worker.job_id);cell(row,dateTime(worker.last_seen_unix)).className='time';badges(cell(row,''),worker.tags||[]);}
+ renderJobs('running',jobs.running);renderJobs('queued',jobs.queued);renderJobs('finished',jobs.recent_finished);$('clear-completed').disabled=readonly||!jobs.recent_finished.length;await updateLogs();}
+async function poll(){try{await refresh();}catch(e){$('error').textContent=e.message;}finally{setTimeout(poll,1500);}}poll();
+</script>
+</html>

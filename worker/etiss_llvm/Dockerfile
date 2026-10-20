@@ -4,15 +4,30 @@ FROM philippvk/isaac-quickstart-demo:cv32e40p-latest
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y zstd tar
+RUN cp /work/llvm/.seal5/settings.yml /opt/seal5-baseline.yml
+
+ENV PATH="/work/venv/bin:${PATH}"
+ARG M2ISAR_REF=051d3354811e94f6ed61f4fdc54188370884e828
+RUN git clone https://github.com/PhilippvK/M2-ISA-R.git /opt/m2isar && \
+    git -C /opt/m2isar fetch origin ${M2ISAR_REF} && \
+    git -C /opt/m2isar checkout FETCH_HEAD && pip install -e /opt/m2isar
+
+RUN apt-get update && apt-get install -y zstd tar ccache
 
 COPY etiss_llvm/requirements.txt .
 RUN pip install -r requirements.txt
 
-COPY worker.py .
+COPY worker.py job_state.py ./
+COPY llvm/prepare.py /scripts/prepare_llvm.py
 COPY etiss_llvm/run_retarget.sh /scripts/run_retarget.sh
+COPY llvm/run_retarget.sh /scripts/retarget_llvm.sh
+COPY etiss/retarget.sh /scripts/retarget_etiss.sh
 
-RUN chmod +x /scripts/run_retarget.sh
+ENV PYTHONPATH="/opt/m2isar"
+COPY etiss/fix_m2isar.py /scripts/fix_m2isar.py
+RUN python /scripts/fix_m2isar.py /opt/m2isar
+
+RUN chmod +x /scripts/*.sh
 
 RUN git clone https://github.com/tum-ei-eda/etiss_arch_riscv.git --recursive /tools/etiss_arch_riscv
 
