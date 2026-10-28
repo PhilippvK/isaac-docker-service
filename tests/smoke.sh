@@ -6,7 +6,8 @@ cd "$root"
 case "${1:-}" in
     etiss) service=worker-etiss ;;
     etiss_perf) service=worker-etiss-perf ;;
-    *) echo "Usage: bash tests/smoke.sh {etiss|etiss_perf}" >&2; exit 1 ;;
+    spike) service=worker-spike ;;
+    *) echo "Usage: bash tests/smoke.sh {etiss|etiss_perf|spike}" >&2; exit 1 ;;
 esac
 docker compose -p isaac-simulator-smoke --profile separated run --build --rm --no-deps \
     -v "$root/tests/smoke_prepare.py:/tmp/smoke_prepare.py:ro" \
@@ -19,6 +20,9 @@ docker compose -p isaac-simulator-smoke --profile separated run --build --rm --n
         if [[ $JOB_TAG == etiss ]]; then
             test -s "$JOB_DIR/output/etiss_source.tar.gz"
             find "$JOB_DIR/output/etiss_install" -name libXIsaacCore.so -size +0c -print -quit | grep -q .
+        elif [[ $JOB_TAG == spike ]]; then
+            test -s "$JOB_DIR/output/spike/libextension.so"
+            test -s "$JOB_DIR/output/spike/spike_plugin.json"
         else
             test -s "$JOB_DIR/output/etiss_perf_source.tar.gz"
             test -s "$JOB_DIR/output/uarchs.csv"

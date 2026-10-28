@@ -8,7 +8,7 @@ docker compose --profile combined up --build -d --remove-orphans
 docker compose --profile separated up --build -d --remove-orphans
 ```
 
-Use either profile. `separated` runs individual LLVM and ETISS workers;
+Use either profile. `separated` runs individual LLVM, ETISS, and Spike workers;
 `combined` runs a shared `etiss`/`etiss_perf` worker pool (`worker-etiss-combined`)
 and a separate LLVM pool (`worker-llvm`). `separated` also gives performance jobs
 their own dedicated worker. The dedicated ISS worker uses
@@ -47,6 +47,7 @@ three base uploads, even though the simulator scripts do not use the LLVM config
 | --- | --- | --- | --- | --- |
 | `llvm` | `etiss_instructions.core_desc` | the same `etiss_instructions.core_desc` | `config.yaml` | none |
 | `etiss` | `etiss.core_desc` | `etiss_instructions.core_desc` | `config.yaml` | none |
+| `spike` | top-level `XIsaacCore.core_desc` | imported instruction-set `.core_desc` | `config.yaml` | none |
 | `etiss_perf` | `etiss.core_desc` | `etiss_instructions.core_desc` | `config.yaml` | matching ISAAC index + HLS archive |
 
 For LLVM, uploading the same instruction-set file twice leaves one input file
@@ -94,7 +95,7 @@ See [Compose scaling](https://docs.docker.com/reference/cli/docker/compose/up/) 
 
 ## Dashboard and job control
 
-Open `http://localhost:8080/dashboard` to submit LLVM, ETISS, or performance
+Open `http://localhost:8080/dashboard` to submit LLVM, ETISS, Spike, or performance
 simulator jobs. The plus icon opens the submission popup, which is hidden by
 default. The form accepts the same files as the client. Actions use icons with
 tooltips and accessible labels. Queued jobs offer only abort; running jobs also
@@ -178,6 +179,16 @@ Workspaces are isolated per job. Builds need network access for upstream sources
 and Python packages; `BUILD_JOBS` controls retargeting CMake parallelism (Compose default: 4).
 
 The scripts follow [isaac-demo's local ETISS workflows](https://github.com/PhilippvK/isaac-demo/tree/fb3acb1ddcb3af2903837cb45ddba19b289ed5a7/docker).
+
+## Retargeting Spike
+
+The `spike` worker parses the uploaded top-level CoreDSL and its imported
+instruction-set description, compiles the custom extension against the matching
+Spike headers in `isaac-quickstart-spike`, and returns `output/spike/` with
+`libextension.so` and `spike_plugin.json`. The manifest uses a library path
+relative to itself, so it remains valid after the Toolkit downloads and extracts
+the artifact. Start the worker with the `separated` profile; configure the demo
+service tag as `spike`.
 The ISS images pin M2-ISA-R to that demo's submodule revision; performance builds
 use the `xisaac_gen2` workspace and its generators, following the local performance
 script rather than the image's older ISS-only entrypoint.

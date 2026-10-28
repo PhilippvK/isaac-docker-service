@@ -82,6 +82,16 @@ def test_dashboard_submission_actions_and_readonly(real_state, tmp_path):
             assert real_state.load(perf_job)["tag"] == "etiss_perf"
             assert (real_state.path(perf_job) / "input/index.yaml").read_bytes() == b"perf input"
             assert (real_state.path(perf_job) / "input/hls.tar.gz").read_bytes() == b"perf input"
+            page.get_by_role("button", name="New job", exact=True).click()
+            page.locator('[name="tag"]').select_option("spike")
+            for field, name in [("cdsl", "top.core_desc"), ("cpdsl", "split.core_desc"), ("config", "config.yaml")]:
+                page.locator(f'[name="{field}"]').set_input_files({"name": name, "mimeType": "text/plain", "buffer": b"test"})
+            page.get_by_role("button", name="Submit job", exact=True).click()
+            page.locator("#queued tr").wait_for()
+            spike_row = page.locator("#queued tr").filter(has=page.locator(".badge.tag-spike"))
+            spike_job = spike_row.locator("td").first.inner_text()
+            assert real_state.load(spike_job)["tag"] == "spike"
+            assert spike_row.count() == 1
             add(real_state, "readonly-running")
             assert real_state.claim(["etiss"], "readonly-worker") == "readonly-running"
             real_state.update("readonly-running", progress=.42, elapsed_seconds=78, eta_seconds=120, stage="Building ETISS")

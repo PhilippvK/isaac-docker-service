@@ -20,6 +20,8 @@ def patch(root):
     if new in source:
         return
     if old not in source:
+        if "for stmt in expr.stmts:" in source and "if isinstance(stmt, list):" in source:
+            return
         raise RuntimeError(f"M2-ISA-R conditional implementation changed: {path}")
     path.write_text(source.replace(old, new, 1))
 

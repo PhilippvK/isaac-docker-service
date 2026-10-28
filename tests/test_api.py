@@ -145,6 +145,24 @@ def test_etiss_submission_uses_etiss_tag(service):
     assert api.load_status(job["job_id"])["tag"] == "etiss"
 
 
+def test_spike_submission_uses_spike_tag(service):
+    _, _, root = service
+    job = submit(service[0], "spike")
+    assert api.load_status(job["job_id"])["tag"] == "spike"
+    assert (root / job["job_id"] / "input/config.yaml").read_bytes() == b"option: true\n"
+
+
+def test_unknown_tag_is_rejected(service):
+    client, redis, root = service
+    response = client.post(
+        "/jobs", data={"tag": "unknown"},
+        files={key: (key, b"content") for key in ("cdsl", "cpdsl", "config")},
+    )
+    assert response.status_code == 422
+    redis.rpush.assert_not_called()
+    assert not [path for path in root.iterdir() if path.is_dir()]
+
+
 def test_perf_submission_preserves_index_and_hls(service):
     client, _, root = service
     job = submit(client, "etiss_perf", {

@@ -23,6 +23,7 @@ r = redis.Redis(host=REDIS_HOST, port=6379, decode_responses=True)
 JOBS_DIR = "/jobs"
 
 app = FastAPI()
+SUPPORTED_TAGS = {"llvm", "etiss", "etiss_perf", "spike"}
 
 
 def job_path(job_id):
@@ -142,6 +143,8 @@ async def create_job(tag: str = Form(...), cdsl: UploadFile = File(...), cpdsl: 
                      config: UploadFile = File(...), index: UploadFile = File(None),
                      hls: UploadFile = File(None)):
 
+    if tag not in SUPPORTED_TAGS:
+        raise HTTPException(status_code=422, detail=f"unsupported job tag: {tag}")
     if tag == "etiss_perf" and (index is None or hls is None):
         raise HTTPException(status_code=422, detail="etiss_perf requires index and hls uploads")
     for upload in (cdsl, cpdsl):

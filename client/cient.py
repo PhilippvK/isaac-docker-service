@@ -137,7 +137,7 @@ class RetargetClient:
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("tag", nargs="?", choices=["llvm", "etiss", "etiss_perf"])
+    parser.add_argument("tag", nargs="?", choices=["llvm", "etiss", "etiss_perf", "spike"])
     parser.add_argument("--abort", metavar="JOB_ID")
     parser.add_argument("--token")
     parser.add_argument("--api-url", default="http://localhost:8080")

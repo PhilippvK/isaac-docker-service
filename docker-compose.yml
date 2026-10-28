@@ -75,6 +75,23 @@ services:
       - WORKER_TAGS=etiss
     profiles: ["separated"]
 
+  worker-spike:
+    build:
+      context: ./worker/
+      dockerfile: ./spike/Dockerfile
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - jobs:/jobs
+      - ccache:/ccache
+    environment:
+      - REDIS_HOST=redis
+      - WORKER_TAGS=spike
+    profiles: ["separated"]
+
   worker-etiss-combined:
     build:
       context: ./worker/
