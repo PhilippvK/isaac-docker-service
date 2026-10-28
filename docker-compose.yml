@@ -4,13 +4,29 @@ services:
 
   redis:
     image: redis:7
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 1s
+      retries: 30
 
   api:
-    build: ./api
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    environment:
+      - RESET_ON_STARTUP=${RESET_ON_STARTUP:-1}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
     ports:
       - "8080:8080"
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     volumes:
       - jobs:/jobs
 
@@ -18,58 +34,87 @@ services:
     build:
       context: ./worker/
       dockerfile: ./llvm/Dockerfile
-    deploy:
-      resources:
-        limits:
-          cpus: '8.0'
-          memory: 8G
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '8.0'
+    #       memory: 8G
     depends_on:
-      - redis
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - jobs:/jobs
       - ccache:/ccache
     environment:
       - REDIS_HOST=redis
       - WORKER_TAGS=llvm
-    profiles: ["separated"]
+    profiles: ["separated", "combined"]
 
   worker-etiss:
     build:
       context: ./worker/
       dockerfile: ./etiss/Dockerfile
-    deploy:
-      resources:
-        limits:
-          cpus: '8.0'
-          memory: 8G
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '8.0'
+    #       memory: 8G
     depends_on:
-      - redis
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - jobs:/jobs
       - ccache:/ccache
     environment:
       - REDIS_HOST=redis
+      - BUILD_JOBS=${BUILD_JOBS:-4}
       - WORKER_TAGS=etiss
     profiles: ["separated"]
 
-  worker-etiss-llvm:
+  worker-etiss-combined:
     build:
       context: ./worker/
-      dockerfile: ./etiss_llvm/Dockerfile
-    deploy:
-      resources:
-        limits:
-          cpus: '8.0'
-          memory: 8G
+      dockerfile: ./etiss_perf/Dockerfile
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '8.0'
+    #       memory: 8G
     depends_on:
-      - redis
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - jobs:/jobs
       - ccache:/ccache
     environment:
       - REDIS_HOST=redis
-      - WORKER_TAGS=etiss,llvm
+      - BUILD_JOBS=${BUILD_JOBS:-4}
+      - WORKER_TAGS=etiss,etiss_perf
     profiles: ["combined"]
+
+  worker-etiss-perf:
+    build:
+      context: ./worker/
+      dockerfile: ./etiss_perf/Dockerfile
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - jobs:/jobs
+      - ccache:/ccache
+    environment:
+      - REDIS_HOST=redis
+      - BUILD_JOBS=${BUILD_JOBS:-4}
+      - WORKER_TAGS=etiss_perf
+    profiles: ["separated"]
 
 volumes:
   jobs:

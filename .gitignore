@@ -1,0 +1,7 @@
+*.txt
+*.tar.zst
+__pycache__/
+*venv*
+
+# Keep dependency manifests alongside the tests.
+!requirements.txt

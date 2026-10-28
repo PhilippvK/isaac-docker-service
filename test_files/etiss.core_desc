@@ -1,0 +1,6 @@
+import "/tools/etiss_arch_riscv/rv_base/RVI.core_desc"
+import "/tools/etiss_arch_riscv/rv_base/RVM.core_desc"
+import "etiss_instructions.core_desc"
+import "/tools/etiss_arch_riscv/tum_mod.core_desc"
+
+Core XIsaacCore provides RV32I, RV32M, tum_csr, tum_ret, tum_semihosting, XIsaac {}

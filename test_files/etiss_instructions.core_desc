@@ -1,0 +1,11 @@
+import "/tools/etiss_arch_riscv/rv_base/RVI.core_desc"
+
+InstructionSet XIsaac extends RV32I {
+    instructions {
+        CUSTOM0 {
+            encoding: 7'b0000000 :: rs2[4:0] :: rs1[4:0] :: 3'b000 :: rd[4:0] :: 7'b0001011;
+            assembly: {"custom0", "{name(rd)}, {name(rs1)}, {name(rs2)}"};
+            behavior: { X[rd] = X[rs1] + X[rs2]; }
+        }
+    }
+}

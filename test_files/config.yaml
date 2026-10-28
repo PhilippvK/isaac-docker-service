@@ -15,7 +15,7 @@ filter:
     - reserved
   encoding_sizes:
     keep:
-    - 3
+    - 32  # instruction width in bits
 git:
   author: ISAAC Developers
   mail: example@example.com

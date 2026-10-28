@@ -1,0 +1,20 @@
+name: isaac-docker-service-tests
+
+services:
+  tests:
+    build:
+      context: .
+      dockerfile: tests/Dockerfile
+    environment:
+      - TEST_REDIS_HOST=redis-tests
+    depends_on:
+      redis-tests:
+        condition: service_healthy
+  redis-tests:
+    image: redis:7
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 1s
+      retries: 30

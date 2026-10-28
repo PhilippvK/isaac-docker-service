@@ -4,12 +4,15 @@ FROM philippvk/isaac-quickstart-demo:cv32e40p-latest
 
 WORKDIR /app
 
+RUN cp /work/llvm/.seal5/settings.yml /opt/seal5-baseline.yml
+
 RUN apt-get update && apt-get install -y zstd tar
 
 COPY llvm/requirements.txt .
 RUN pip install -r requirements.txt
 
-COPY worker.py .
+COPY worker.py job_state.py ./
+COPY llvm/prepare.py /scripts/prepare_llvm.py
 COPY llvm/run_retarget.sh /scripts/run_retarget.sh
 
 RUN chmod +x /scripts/run_retarget.sh
