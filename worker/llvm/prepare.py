@@ -49,8 +49,6 @@ def prepare(home, inputs, baseline):
     from seal5.settings import Seal5Settings
     from seal5.tools.llvm import detect_llvm_imm_types
     settings = Seal5Settings.from_yaml_file(meta / "settings.yml")
-    settings.patches = [patch for patch in settings.patches
-                        if patch.name not in {"uimm12_op", "uimm12_op_llvm19"}]
     if settings.llvm.state.supported_imm_types is None:
         settings.llvm.state.supported_imm_types = sorted(detect_llvm_imm_types(home))
     settings.save()

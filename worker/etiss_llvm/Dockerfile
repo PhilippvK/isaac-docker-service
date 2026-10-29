@@ -20,11 +20,9 @@ COPY llvm/run_retarget.sh /scripts/retarget_llvm.sh
 COPY etiss/retarget.sh /scripts/retarget_etiss.sh
 
 
-# Use the same typed model and ISAAC Seal5 port as GenIE local retargeting.
+# Use the same upstream typed model and Seal5 as GenIE local retargeting.
 COPY seal5-main/install.sh /opt/genie-seal5/install.sh
-COPY seal5-main/seal5-isaac-main.patch /opt/genie-seal5/seal5-isaac-main.patch
-COPY seal5-main/m2isar-spike-behavior.patch /opt/genie-seal5/m2isar-spike-behavior.patch
-COPY seal5-main/upgrade_baseline.py /opt/genie-seal5/upgrade_baseline.py
+COPY seal5-main/configure_baseline.py /opt/genie-seal5/configure_baseline.py
 RUN bash /opt/genie-seal5/install.sh
 ENV PYTHONPATH="/opt/genie-seal5/src:/opt/m2isar"
 
