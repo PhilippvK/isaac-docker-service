@@ -41,21 +41,8 @@ def missing_marker_patch(home, patch):
     return "".join(selected), sorted(changed)
 
 
-def upgrade(home, baseline):
-    from seal5.resources.resources import get_patches
-    from seal5.settings import Seal5Settings
-    from seal5.tools.llvm import detect_llvm_imm_types
-
-    home, baseline = Path(home), Path(baseline)
-    settings = Seal5Settings.from_yaml_file(baseline)
-    version = settings.llvm.state.version.major
-    patches = get_patches(patch_name=f"insert_markers_llvm{version}", target="llvm")
-    if len(patches) != 1:
-        raise ValueError(f"Expected one marker patch for LLVM {version}")
-    # This script is run during image construction, before accepting any jobs.
-    dirty = git(home, "status", "--porcelain", "--untracked-files=no", capture_output=True, text=True).stdout
-    if dirty.strip():
-        raise RuntimeError("Refusing to migrate a baseline with uncommitted tracked changes")
+def configure_regression_tests(home, settings):
+    """Retain lit configuration sources and enable the worker's LLVM tests."""
     sparse = git(home, "rev-parse", "--git-path", "info/sparse-checkout",
                  capture_output=True, text=True).stdout.strip()
     sparse = Path(sparse)
@@ -72,7 +59,33 @@ def upgrade(home, baseline):
                           f"!/llvm/test/{kind}/RISCV/*/",
                           f"/llvm/test/{kind}/RISCV/seal5/"))
         if "/llvm/test/CodeGen/RISCV/seal5/" not in patterns.splitlines():
-            sparse.write_text(patterns.rstrip() + "\n" + "\n".join(extra) + "\n")
+            patterns = patterns.rstrip() + "\n" + "\n".join(extra) + "\n"
+        for directory in ("/llvm/test/Unit/", "/llvm/unittests/", "/third-party/"):
+            if directory not in patterns.splitlines():
+                patterns += directory + "\n"
+        sparse.write_text(patterns)
+    for config in (settings.llvm.configs or {}).values():
+        config.options.update(LLVM_INCLUDE_TESTS=True, LLVM_BUILD_TESTS=False,
+                              LLVM_INCLUDE_UTILS=True, CLANG_INCLUDE_TESTS=False,
+                              LLD_INCLUDE_TESTS=False)
+
+
+def upgrade(home, baseline):
+    from seal5.resources.resources import get_patches
+    from seal5.settings import Seal5Settings
+    from seal5.tools.llvm import detect_llvm_imm_types
+
+    home, baseline = Path(home), Path(baseline)
+    settings = Seal5Settings.from_yaml_file(baseline)
+    version = settings.llvm.state.version.major
+    patches = get_patches(patch_name=f"insert_markers_llvm{version}", target="llvm")
+    if len(patches) != 1:
+        raise ValueError(f"Expected one marker patch for LLVM {version}")
+    # This script is run during image construction, before accepting any jobs.
+    dirty = git(home, "status", "--porcelain", "--untracked-files=no", capture_output=True, text=True).stdout
+    if dirty.strip():
+        raise RuntimeError("Refusing to migrate a baseline with uncommitted tracked changes")
+    configure_regression_tests(home, settings)
     git(home, "reset", "--hard", "seal5-default-stage0")
     patch, files = missing_marker_patch(home, patches[0].read_text())
     if patch:
