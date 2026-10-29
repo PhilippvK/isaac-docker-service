@@ -4,7 +4,7 @@ export PATH="/work/venv/bin:$PATH"
 # The base image can contain editable installs and a different PYTHONPATH.
 unset PYTHONPATH
 M2ISAR_REF=59ba470011fafe5e814a2b9ca9504d8175fe25cc
-SEAL5_REF=0f0a94b55c0b2e8cdfa30a9c552bf08082fc85fe
+SEAL5_REF=b46c99878bbb0a5f4e04f5eaf805762298b0dd5b
 git clone https://github.com/tum-ei-eda/M2-ISA-R.git /opt/m2isar
 git -C /opt/m2isar checkout "$M2ISAR_REF"
 git clone https://github.com/tum-ei-eda/seal5.git /opt/genie-seal5/src
