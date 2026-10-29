@@ -9,6 +9,8 @@ ARG ETISS_ARCH_REF=45e3067fcaac9e1cd79c4a008fa570c60055af92
 RUN git clone https://github.com/PhilippvK/M2-ISA-R.git /opt/m2isar && \
     git -C /opt/m2isar fetch origin ${M2ISAR_REF} && \
     git -C /opt/m2isar checkout FETCH_HEAD && pip3 install /opt/m2isar
+COPY seal5-main/m2isar-spike-behavior.patch /opt/genie-spike-behavior.patch
+RUN git -C /opt/m2isar apply /opt/genie-spike-behavior.patch
 ENV PYTHONPATH="/opt/m2isar"
 ENV MLONMCU_HOME=/environment
 ENV SPIKE_INSTALL_DIR=/environment/deps/install/spike

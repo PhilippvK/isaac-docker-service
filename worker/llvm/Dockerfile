@@ -4,6 +4,8 @@ FROM philippvk/isaac-quickstart-demo:cv32e40p-latest
 
 WORKDIR /app
 
+ENV PATH="/work/venv/bin:${PATH}"
+
 RUN cp /work/llvm/.seal5/settings.yml /opt/seal5-baseline.yml
 
 RUN apt-get update && apt-get install -y zstd tar
@@ -14,6 +16,14 @@ RUN pip install -r requirements.txt
 COPY worker.py job_state.py ./
 COPY llvm/prepare.py /scripts/prepare_llvm.py
 COPY llvm/run_retarget.sh /scripts/run_retarget.sh
+
+# Use the same typed model and ISAAC Seal5 port as GenIE local retargeting.
+COPY seal5-main/install.sh /opt/genie-seal5/install.sh
+COPY seal5-main/seal5-isaac-main.patch /opt/genie-seal5/seal5-isaac-main.patch
+COPY seal5-main/m2isar-spike-behavior.patch /opt/genie-seal5/m2isar-spike-behavior.patch
+COPY seal5-main/upgrade_baseline.py /opt/genie-seal5/upgrade_baseline.py
+RUN bash /opt/genie-seal5/install.sh
+ENV PYTHONPATH="/opt/genie-seal5/src:/opt/m2isar"
 
 RUN chmod +x /scripts/run_retarget.sh
 

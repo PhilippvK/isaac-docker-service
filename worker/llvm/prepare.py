@@ -14,7 +14,7 @@ def validate_models(directory):
     for path in models:
         with path.open("rb") as handle:
             model = pickle.load(handle)
-        instructions = sum(len(item.instructions) for item in model["sets"].values())
+        instructions = sum(len(item.instructions) for item in model.sets.values())
         if not instructions:
             raise RuntimeError(
                 f"No instructions remain in {path.stem} after filtering. "
@@ -45,6 +45,15 @@ def prepare(home, inputs, baseline):
     # Uploaded settings must override the baked-in defaults, rather than union
     # their filter lists with defaults that can hide invalid inputs on run one.
     subprocess.run(command + ["load", "--overwrite", "--files", str(config)], check=True)
+    # Older baked-in baselines predate the supported-immediate inventory.
+    from seal5.settings import Seal5Settings
+    from seal5.tools.llvm import detect_llvm_imm_types
+    settings = Seal5Settings.from_yaml_file(meta / "settings.yml")
+    settings.patches = [patch for patch in settings.patches
+                        if patch.name not in {"uimm12_op", "uimm12_op_llvm19"}]
+    if settings.llvm.state.supported_imm_types is None:
+        settings.llvm.state.supported_imm_types = sorted(detect_llvm_imm_types(home))
+    settings.save()
     subprocess.run(command + ["transform"], check=True)
     validate_models(meta / "models")
 
