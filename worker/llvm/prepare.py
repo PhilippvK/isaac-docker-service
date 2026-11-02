@@ -39,6 +39,15 @@ def prepare(home, inputs, baseline):
     # alone retains some settings; cleanup at the end never runs after a failure.
     shutil.copyfile(baseline, meta / "settings.yml")
     subprocess.run(["git", "-C", str(home), "reset", "--hard", "seal5-default-stage0"], check=True)
+    # Official LLVM 19 immediate matching cannot see constants behind
+    # G_CONSTANT_FOLD_BARRIER. Restore this fix after every baseline reset.
+    patch = Path(__file__).with_name("constant-barrier-matcher.patch")
+    if subprocess.run(["git", "-C", str(home), "apply", "--reverse", "--check", str(patch)],
+                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
+        subprocess.run(["git", "-C", str(home), "apply", "--index", str(patch)], check=True)
+        subprocess.run(["git", "-C", str(home), "-c", "user.name=ISAAC worker",
+                        "-c", "user.email=isaac-worker@localhost", "commit", "-m",
+                        "Fix immediate matching through constant-fold barriers"], check=True)
     command = ["seal5", "--dir", str(home)]
     subprocess.run(command + ["clean", "--inputs", "--models", "--temp", "--patches"], check=True)
     subprocess.run(command + ["load", "--files", *map(str, files)], check=True)

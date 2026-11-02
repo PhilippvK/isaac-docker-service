@@ -1,6 +1,5 @@
-# FROM python:3.11
-# FROM philippvk/isaac-quickstart-demo
-FROM philippvk/isaac-quickstart-demo:cv32e40p-latest
+ARG COMBINED_BASE_IMAGE=philippvk/isaac-quickstart-full:latest
+FROM ${COMBINED_BASE_IMAGE}
 
 WORKDIR /app
 

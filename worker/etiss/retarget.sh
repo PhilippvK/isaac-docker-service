@@ -22,7 +22,8 @@ echo "::progress:: 0.12 0.18 Parsing CoreDSL"
 python3 -m m2isar.frontends.coredsl2.parser "$top"
 echo "::progress:: 0.18 0.24 Generating architecture"
 python3 -m m2isar.backends.etiss.writer \
-    "$JOB_DIR/input/gen_model/$name.m2isarmodel" --separate --static-scalars
+    "$JOB_DIR/input/gen_model/$name.m2isarmodel" --separate --static-scalars \
+    --fill-mode "${ISAAC_M2ISAR_FILL_MODE:-auto}"
 mapfile -d '' cores < <(find "$JOB_DIR/input/gen_output/$name" -mindepth 1 -maxdepth 1 -type d -print0)
 if [[ ${#cores[@]} != 1 ]]; then
     echo "ETISS requires exactly one generated core" >&2
@@ -30,8 +31,7 @@ if [[ ${#cores[@]} != 1 ]]; then
 fi
 name=$(basename "${cores[0]}")
 cp -r "${cores[0]}" "$home/ArchImpl/"
-sed "s/RV32IMACFD/$name/g" "$home/ArchImpl/RV32IMACFD/RV32IMACFDArchSpecificImp.cpp" \
-    > "$home/ArchImpl/$name/${name}ArchSpecificImp.cpp"
+# Keep the typed backend implementation, including installDir() and JIT paths.
 echo "::progress:: 0.24 0.28 Preparing sources"
 git -C "$home" add -N ArchImpl/
 git -C "$home" diff > "$dest/etiss_patch_full.diff"
