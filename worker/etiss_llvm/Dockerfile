@@ -3,6 +3,10 @@ FROM ${COMBINED_BASE_IMAGE}
 
 WORKDIR /app
 
+# Reject stale base images rather than restoring source compatibility patches.
+ARG ISAAC_LLVM_REVISION=5bd6ab74cd1dc8d09e54ca6000361d020d138aeb
+RUN git -C /work/llvm merge-base --is-ancestor ${ISAAC_LLVM_REVISION} seal5-default-stage0
+
 RUN cp /work/llvm/.seal5/settings.yml /opt/seal5-baseline.yml
 
 ENV PATH="/work/venv/bin:${PATH}"

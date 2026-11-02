@@ -7,14 +7,12 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y zstd tar ccache
 
 ENV PATH="/work/venv/bin:${PATH}"
-ARG M2ISAR_REF=a2a9a9c87bdd97eca3ed6997af3656960b38c215
+ARG M2ISAR_REF=59ba470011fafe5e814a2b9ca9504d8175fe25cc
 ARG ETISS_ARCH_REF=45e3067fcaac9e1cd79c4a008fa570c60055af92
-RUN git clone https://github.com/PhilippvK/M2-ISA-R.git /opt/m2isar && \
+RUN git clone https://github.com/tum-ei-eda/M2-ISA-R.git /opt/m2isar && \
     git -C /opt/m2isar fetch origin ${M2ISAR_REF} && \
     git -C /opt/m2isar checkout FETCH_HEAD && pip install -e /opt/m2isar
 ENV PYTHONPATH="/opt/m2isar"
-COPY etiss/fix_m2isar.py /scripts/fix_m2isar.py
-RUN python /scripts/fix_m2isar.py /opt/m2isar
 
 COPY etiss/requirements.txt .
 RUN pip install -r requirements.txt

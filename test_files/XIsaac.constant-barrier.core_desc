@@ -1,0 +1,27 @@
+import "/tools/etiss_arch_riscv/rv_base/RVI.core_desc"
+
+InstructionSet XIsaac extends RV32I {
+    instructions {
+        CUSTOM0 {
+            operands: {
+                unsigned<5> rd [[is_reg]] [[reg_class="GPR"]] [[reg_type="s32"]] [[inout]];
+                unsigned<5> rs2 [[is_reg]] [[reg_class="GPR"]] [[reg_type="s32"]] [[in]];
+                unsigned<5> rs3 [[is_reg]] [[reg_class="GPR"]] [[reg_type="s32"]] [[in]];
+            }
+            encoding: 1'b0 :: 1'b0 :: 1'b0 :: 1'b0 :: 1'b0 :: 1'b0 :: 1'b0 :: rs3[4:0] :: rs2[4:0] :: 1'b0 :: 1'b0 :: 1'b0 :: rd[4:0] :: 1'b0 :: 1'b0 :: 1'b0 :: 1'b1 :: 1'b0 :: 1'b1 :: 1'b1;
+            assembly: {"custom0", "{name(rd)}, {name(rs2)}, {name(rs3)}"};
+            behavior: {
+                {
+                    unsigned<32> rs2_val = X[rs2];
+                    unsigned<32> rs3_val = X[rs3];
+                    unsigned<32> rd_val = X[rd];
+                    unsigned<32> outp0 = (unsigned<32>)(((unsigned<32>)((unsigned<32>)(((unsigned<32>)((unsigned<32>)(((signed<32>)((unsigned<32>)(((signed<32>)(rd_val)) * ((signed<32>)((unsigned<32>)(((signed<32>)(rs3_val)) + ((signed<32>)(-(403))))))))) + ((signed<32>)((unsigned<32>)(((signed<32>)(rs2_val)) + ((signed<32>)(57)))))))) << ((unsigned<32>)(1))))) >> ((unsigned<32>)(1)));
+                    if ((rd) != (0)) {
+                        X[rd] = outp0;
+                    }
+                }
+            }
+        }
+    }
+}
+
