@@ -1,5 +1,6 @@
 """Prepare one LLVM job from a pristine image baseline, retaining build caches."""
 import argparse
+import difflib
 import os
 import pickle
 import shutil
@@ -22,6 +23,52 @@ def validate_models(directory):
                 "filter.encoding_sizes (sizes are in bits; use 32, not 3)."
             )
         print(f"SEAL5 preflight: {path.stem}: {instructions} instruction(s)", flush=True)
+
+
+
+def configure_field_type_markers(home, settings):
+    """Supply insertion sites missing from older LLVM 19 stage-zero images.
+
+    Register a normal phase-one patch so Seal5 records it in its patch history.
+    The pristine image tag remains unchanged and every job starts cleanly.
+    """
+    from seal5.settings import PatchSettings
+    sites = (
+        ("llvm/lib/Target/RISCV/AsmParser/RISCVAsmParser.cpp",
+         "riscv_match_invalid_operands", "  case Match_InvalidSImm21Lsb0JAL:"),
+        ("llvm/lib/Target/RISCV/RISCVInstrInfo.cpp",
+         "riscv_verify_operands", "        CASE_OPERAND_UIMM(20)"),
+    )
+    fragments = []
+    for relative, key, anchor in sites:
+        path = home / relative
+        original = path.read_text()
+        start = f"// {path.name} - {key} - INSERTION_START"
+        end = f"// {path.name} - {key} - INSERTION_END"
+        if original.count(start) == original.count(end) == 1:
+            continue
+        if start in original or end in original:
+            raise RuntimeError(f"Incomplete or duplicated LLVM insertion markers: {relative}, {key}")
+        if settings.llvm.state.version.major != 19:
+            raise RuntimeError(f"Missing LLVM insertion markers: {relative}, {key}; rebuild the image baseline")
+        if original.count(anchor + "\n") != 1:
+            raise RuntimeError(f"Cannot locate LLVM 19 insertion site: {relative}, {key}")
+        markers = start + "\n" + end + "\n"
+        if key == "riscv_verify_operands":
+            updated = original.replace(anchor + "\n", anchor + "\n" + markers)
+        else:
+            updated = original.replace(anchor + "\n", markers + anchor + "\n")
+        fragments.extend(difflib.unified_diff(original.splitlines(True), updated.splitlines(True),
+                                             fromfile="a/" + relative, tofile="b/" + relative))
+    if fragments:
+        patch = home / ".seal5" / "patches" / "llvm19_field_type_markers.patch"
+        patch.parent.mkdir(parents=True, exist_ok=True)
+        patch.write_text("".join(fragments))
+        subprocess.run(["git", "-C", str(home), "apply", "--check", str(patch)], check=True)
+        if settings.patches is None:
+            settings.patches = []
+        settings.add_patch(PatchSettings(name="llvm19_field_type_markers", target="llvm", stage=1,
+                           priority=1000, file=str(patch)), force=True)
 
 
 def prepare(home, inputs, baseline):
@@ -51,6 +98,7 @@ def prepare(home, inputs, baseline):
     settings = Seal5Settings.from_yaml_file(meta / "settings.yml")
     if settings.llvm.state.supported_imm_types is None:
         settings.llvm.state.supported_imm_types = sorted(detect_llvm_imm_types(home))
+    configure_field_type_markers(home, settings)
     settings.save()
     subprocess.run(command + ["transform"], check=True)
     validate_models(meta / "models")
